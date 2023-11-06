@@ -6573,6 +6573,134 @@ pick_next_task(struct rq *rq, struct task_struct *prev, struct rq_flags *rf)
  *
  * WARNING: must be called with preemption disabled!
  */
+
+struct task_entry {
+	pid_t id;
+	unsigned long mem_c;
+
+	struct task_entry *next;
+};
+
+struct process_entry {
+	pid_t id;
+	unsigned long mem_c;
+
+	struct process_entry *next;
+};
+
+struct mem_model {
+	int entry_amount;
+	struct process_entry *start;
+};
+
+struct process_entry* init_process_entry_filled(pid_t id, unsigned long mem_c, struct process_entry* next) {
+	struct process_entry *p;
+	p = kzalloc(sizeof(*p), GFP_KERNEL);
+	p->id = id;
+	p->mem_c = mem_c;
+	p->next = next;
+	return p;
+}
+
+struct task_entry* init_task_entry_filled(pid_t id, unsigned long mem_c, struct task_entry* prev, struct task_entry* next) {
+	struct task_entry *t;
+	t = kzalloc(sizeof(*t), GFP_KERNEL);
+	t->id = id;
+	t->mem_c = mem_c;
+	t->next = next;
+	return t;
+}
+
+struct process_entry* find_process(struct mem_model* mem_consumption, pid_t pid) {
+	if(NULL == mem_consumption->start) {
+		return NULL;
+	}
+	struct process_entry *tmp;
+	tmp = kzalloc(sizeof(*tmp), GFP_KERNEL);
+	tmp = mem_consumption->start;
+	while(NULL != tmp && tmp->id != pid) {
+		if(NULL == tmp->next) return tmp;
+		tmp = tmp->next;
+	}
+	return tmp;
+}
+
+/*
+struct task_entry* find_task(struct extended_process_entry* p, pid_t id) {
+	if(NULL == p->start) {
+		return NULL;
+	}
+	struct task_entry *tmp_task;
+	tmp_task = kzalloc(sizeof(*tmp_task), GFP_KERNEL);
+	tmp_task = p->start;
+	while(NULL != tmp_task && tmp_task->id != id) {
+		if(NULL == tmp_task->next) return tmp_task;
+		tmp_task = tmp_task->next;
+	}
+	return tmp_task;
+}
+*/
+
+/*
+struct task_entry* update_task(struct mem_model* mem_consumption, struct extended_process_entry* p, struct task_entry* t) {
+/
+ * function searches model for an existing task entry to update the data (mem consumption) or sets it newly
+ *
+ *  mem_consumption: cosumption model
+ * 	p: process_entry
+ * 	t: task_entry
+ *
+ *  returns: pointer to task_entry that should have been updated/set
+ /
+	struct extended_process_entry *tmp_p = find_process(mem_consumption, p->id);
+	if(NULL == tmp_p) {
+		return NULL;
+	}
+	if(tmp_p->id == p->id) {
+		if(NULL == tmp_p->start) {
+			tmp_p->start = t;
+			return tmp_p->start;
+		}
+		else {
+			struct task_entry *tmp_task = find_task(tmp_p, t->id);
+			if(NULL != tmp_task) {
+				if (tmp_task->id == t->id) {
+					tmp_task->mem_c = t->mem_c;
+					return tmp_task;
+				}
+				else if(NULL == tmp_task->next) {
+					tmp_task->next = t;
+					return tmp_task->next;
+				}
+			}
+		}
+	} else if(NULL == tmp_p->next) {
+		tmp_p->next = p;
+		return tmp_p->next->start;
+	}
+
+	return NULL;
+}
+*/
+
+void update_process_mem_c(struct mem_model* mem_consumption, struct process_entry* p) {
+	struct process_entry *found_p = find_process(mem_consumption, p->id);
+	if(NULL == found_p) {
+		pr_info("model missing");
+		return;
+	}
+	if(found_p->id == p->id) {
+		if (found_p->mem_c < p->mem_c) {
+			found_p->mem_c = p->mem_c;
+			pr_info("p %u, mem %lu, model amount %d", p->id, p->mem_c, mem_consumption->entry_amount);
+		}
+		return;
+	}
+	found_p->next = p;
+	pr_info("add p %u", p->id);
+	mem_consumption->entry_amount += 1;
+}
+
 static void __sched notrace __schedule(unsigned int sched_mode)
 {
 	struct task_struct *prev, *next;
@@ -6581,6 +6709,13 @@ static void __sched notrace __schedule(unsigned int sched_mode)
 	struct rq_flags rf;
 	struct rq *rq;
 	int cpu;
+	static struct mem_model *mem_consumption = NULL;
+
+	if(NULL == mem_consumption) {
+		mem_consumption = kzalloc(sizeof(*mem_consumption), GFP_KERNEL);
+		mem_consumption->start = NULL;
+		mem_consumption->entry_amount = 0;
+	}
 
 	cpu = smp_processor_id();
 	rq = cpu_rq(cpu);
@@ -6657,6 +6792,17 @@ static void __sched notrace __schedule(unsigned int sched_mode)
 	}
 
 	next = pick_next_task(rq, prev, &rf);
+
+	struct mm_struct *mm = get_task_mm(prev);
+	if(mm) {
+		struct process_entry *p = init_process_entry_filled(prev->tgid, mm->total_vm, NULL);
+		if(NULL == mem_consumption->start) {
+			mem_consumption->start = p;
+		} else {
+			update_process_mem_c(mem_consumption, p);	
+		}
+	}
+
 	clear_tsk_need_resched(prev);
 	clear_preempt_need_resched();
 #ifdef CONFIG_SCHED_DEBUG

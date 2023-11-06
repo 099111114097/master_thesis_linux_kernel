@@ -33,7 +33,7 @@ struct gnss_operations {
 	int (*write_raw)(struct gnss_device *gdev, const unsigned char *buf,
 				size_t count);
 };
-
+NULL 
 struct gnss_device {
 	struct device dev;
 	struct cdev cdev;

@@ -431,6 +431,7 @@ long conf_get_long(snd_config_t *root, const char *key1, const char *key2, long 
 int conf_get_bool(snd_config_t *root, const char *key1, const char *key2, int def)
 {
 	snd_config_t *cfg;
+	long l;
 	int ret;
 
 	if (!root)

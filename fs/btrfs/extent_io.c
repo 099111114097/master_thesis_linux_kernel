@@ -484,8 +484,10 @@ static void end_bio_extent_writepage(struct btrfs_bio *bbio)
 				   bvec->bv_offset, bvec->bv_len);
 
 		btrfs_finish_ordered_extent(bbio->ordered, page, start, len, !error);
-		if (error)
+		if (error) {
+			btrfs_page_clear_uptodate(fs_info, page, start, len);
 			mapping_set_error(page->mapping, error);
+		}
 		btrfs_page_clear_writeback(fs_info, page, start, len);
 	}
 
@@ -1454,6 +1456,8 @@ done:
 	if (ret) {
 		btrfs_mark_ordered_io_finished(BTRFS_I(inode), page, page_start,
 					       PAGE_SIZE, !ret);
+		btrfs_page_clear_uptodate(btrfs_sb(inode->i_sb), page,
+					  page_start, PAGE_SIZE);
 		mapping_set_error(page->mapping, ret);
 	}
 	unlock_page(page);
@@ -1620,6 +1624,8 @@ static void extent_buffer_write_end_io(struct btrfs_bio *bbio)
 		struct page *page = bvec->bv_page;
 		u32 len = bvec->bv_len;
 
+		if (!uptodate)
+			btrfs_page_clear_uptodate(fs_info, page, start, len);
 		btrfs_page_clear_writeback(fs_info, page, start, len);
 		bio_offset += len;
 	}
@@ -2195,6 +2201,7 @@ void extent_write_locked_range(struct inode *inode, struct page *locked_page,
 		if (ret) {
 			btrfs_mark_ordered_io_finished(BTRFS_I(inode), page,
 						       cur, cur_len, !ret);
+			btrfs_page_clear_uptodate(fs_info, page, cur, cur_len);
 			mapping_set_error(page->mapping, ret);
 		}
 		btrfs_page_unlock_writer(fs_info, page, cur, cur_len);

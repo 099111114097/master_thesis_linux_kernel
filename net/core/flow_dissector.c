@@ -1446,7 +1446,7 @@ proto_again:
 			break;
 		}
 
-		nhoff += sizeof(struct ptp_header);
+		nhoff += ntohs(hdr->message_length);
 		fdret = FLOW_DISSECT_RET_OUT_GOOD;
 		break;
 	}

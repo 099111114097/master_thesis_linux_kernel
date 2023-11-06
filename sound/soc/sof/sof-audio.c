@@ -212,8 +212,7 @@ widget_free:
 	sof_widget_free_unlocked(sdev, swidget);
 	use_count_decremented = true;
 core_put:
-	if (!use_count_decremented)
-		snd_sof_dsp_core_put(sdev, swidget->core);
+	snd_sof_dsp_core_put(sdev, swidget->core);
 pipe_widget_free:
 	if (swidget->id != snd_soc_dapm_scheduler)
 		sof_widget_free_unlocked(sdev, swidget->spipe->pipe_widget);

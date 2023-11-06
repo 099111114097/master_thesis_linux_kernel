@@ -29,8 +29,7 @@
 static bool otx2_xdp_rcv_pkt_handler(struct otx2_nic *pfvf,
 				     struct bpf_prog *prog,
 				     struct nix_cqe_rx_s *cqe,
-				     struct otx2_cq_queue *cq,
-				     bool *need_xdp_flush);
+				     struct otx2_cq_queue *cq);
 
 static int otx2_nix_cq_op_status(struct otx2_nic *pfvf,
 				 struct otx2_cq_queue *cq)
@@ -338,7 +337,7 @@ static bool otx2_check_rcv_errors(struct otx2_nic *pfvf,
 static void otx2_rcv_pkt_handler(struct otx2_nic *pfvf,
 				 struct napi_struct *napi,
 				 struct otx2_cq_queue *cq,
-				 struct nix_cqe_rx_s *cqe, bool *need_xdp_flush)
+				 struct nix_cqe_rx_s *cqe)
 {
 	struct nix_rx_parse_s *parse = &cqe->parse;
 	struct nix_rx_sg_s *sg = &cqe->sg;
@@ -354,7 +353,7 @@ static void otx2_rcv_pkt_handler(struct otx2_nic *pfvf,
 	}
 
 	if (pfvf->xdp_prog)
-		if (otx2_xdp_rcv_pkt_handler(pfvf, pfvf->xdp_prog, cqe, cq, need_xdp_flush))
+		if (otx2_xdp_rcv_pkt_handler(pfvf, pfvf->xdp_prog, cqe, cq))
 			return;
 
 	skb = napi_get_frags(napi);
@@ -389,7 +388,6 @@ static int otx2_rx_napi_handler(struct otx2_nic *pfvf,
 				struct napi_struct *napi,
 				struct otx2_cq_queue *cq, int budget)
 {
-	bool need_xdp_flush = false;
 	struct nix_cqe_rx_s *cqe;
 	int processed_cqe = 0;
 
@@ -411,15 +409,13 @@ process_cqe:
 		cq->cq_head++;
 		cq->cq_head &= (cq->cqe_cnt - 1);
 
-		otx2_rcv_pkt_handler(pfvf, napi, cq, cqe, &need_xdp_flush);
+		otx2_rcv_pkt_handler(pfvf, napi, cq, cqe);
 
 		cqe->hdr.cqe_type = NIX_XQE_TYPE_INVALID;
 		cqe->sg.seg_addr = 0x00;
 		processed_cqe++;
 		cq->pend_cqe--;
 	}
-	if (need_xdp_flush)
-		xdp_do_flush();
 
 	/* Free CQEs to HW */
 	otx2_write64(pfvf, NIX_LF_CQ_OP_DOOR,
@@ -1358,8 +1354,7 @@ bool otx2_xdp_sq_append_pkt(struct otx2_nic *pfvf, u64 iova, int len, u16 qidx)
 static bool otx2_xdp_rcv_pkt_handler(struct otx2_nic *pfvf,
 				     struct bpf_prog *prog,
 				     struct nix_cqe_rx_s *cqe,
-				     struct otx2_cq_queue *cq,
-				     bool *need_xdp_flush)
+				     struct otx2_cq_queue *cq)
 {
 	unsigned char *hard_start, *data;
 	int qidx = cq->cq_idx;
@@ -1396,10 +1391,8 @@ static bool otx2_xdp_rcv_pkt_handler(struct otx2_nic *pfvf,
 
 		otx2_dma_unmap_page(pfvf, iova, pfvf->rbsize,
 				    DMA_FROM_DEVICE);
-		if (!err) {
-			*need_xdp_flush = true;
+		if (!err)
 			return true;
-		}
 		put_page(page);
 		break;
 	default:

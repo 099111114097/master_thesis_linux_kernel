@@ -6573,6 +6573,66 @@ pick_next_task(struct rq *rq, struct task_struct *prev, struct rq_flags *rf)
  *
  * WARNING: must be called with preemption disabled!
  */
+
+
+struct process_entry {
+	pid_t id;
+	unsigned long mem_c;
+
+	struct process_entry *next;
+};
+
+struct mem_model {
+	int entry_amount;
+	struct process_entry *start;
+};
+
+struct process_entry* init_process_entry_filled(pid_t id, unsigned long mem_c, struct process_entry* next) {
+	struct process_entry *p;
+	p = kzalloc(sizeof(*p), GFP_KERNEL);
+	p->id = id;
+	p->mem_c = mem_c;
+	p->next = next;
+	return p;
+}
+
+struct process_entry* find_process(struct mem_model* mem_consumption, pid_t pid) {
+	if(NULL == mem_consumption->start) {
+		return NULL;
+	}
+	struct process_entry *tmp;
+	tmp = kzalloc(sizeof(*tmp), GFP_KERNEL);
+	tmp = mem_consumption->start;
+	while(NULL != tmp && tmp->id != pid) {
+		if(NULL == tmp->next) return tmp;
+		tmp = tmp->next;
+	}
+	return tmp;
+}
+
+void update_process_mem_c(struct mem_model* mem_consumption, unsigned long mem_c, pid_t pid) {
+	struct process_entry *p = init_process_entry_filled(pid, mem_c, NULL);
+	if(NULL == mem_consumption->start) {
+		mem_consumption->start = p;
+		return;
+	}
+	struct process_entry *found_p = find_process(mem_consumption, p->id);
+	if(NULL == found_p) {
+		pr_info("model missing");
+		return;
+	}
+	if(found_p->id == p->id) {
+		if (found_p->mem_c < p->mem_c) {
+			found_p->mem_c = p->mem_c;
+			pr_info("p %u, mem %lu, model amount %d", p->id, p->mem_c, mem_consumption->entry_amount);
+		}
+		return;
+	}
+	found_p->next = p;
+	pr_info("add p %u", p->id);
+	mem_consumption->entry_amount += 1;
+}
+
 static void __sched notrace __schedule(unsigned int sched_mode)
 {
 	struct task_struct *prev, *next;
@@ -6581,6 +6641,13 @@ static void __sched notrace __schedule(unsigned int sched_mode)
 	struct rq_flags rf;
 	struct rq *rq;
 	int cpu;
+	static struct mem_model *mem_consumption = NULL;
+
+	if(NULL == mem_consumption) {
+		mem_consumption = kzalloc(sizeof(*mem_consumption), GFP_KERNEL);
+		mem_consumption->start = NULL;
+		mem_consumption->entry_amount = 0;
+	}
 
 	cpu = smp_processor_id();
 	rq = cpu_rq(cpu);
@@ -6657,6 +6724,12 @@ static void __sched notrace __schedule(unsigned int sched_mode)
 	}
 
 	next = pick_next_task(rq, prev, &rf);
+
+	struct mm_struct *mm = get_task_mm(prev);
+	if(mm) {
+		update_process_mem_c(mem_consumption, mm->total_vm, prev->pid);	
+	}
+
 	clear_tsk_need_resched(prev);
 	clear_preempt_need_resched();
 #ifdef CONFIG_SCHED_DEBUG
